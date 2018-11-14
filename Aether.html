@@ -1,0 +1,230 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">
+<html><head>
+<meta http-equiv="content-type" content="text/html; charset=UTF-8">
+<title>Aether</title>
+<style><!--
+body
+{ background: #fff; }
+
+input, textarea
+{ border: solid 1px; border-color: #ccc }
+
+input[type="submit"]
+{ color: #00f; background: #ccc; }
+
+h1, h2, h3, h4, h5, h6, span.entrytitle
+{ font-family: Sans-Serif; font-weight: normal; color: #f80; 
+  display: block;
+  margin-top: 60px;
+  margin-bottom: 20px;
+  letter-spacing: 1px }
+
+h1
+{ margin-top: 30px }
+
+a
+{ text-decoration: none }
+
+table, tr, td
+{ border: 0px; padding: 0px; margin: 0px }
+
+form
+{ display: inline }
+
+hr
+{ height: 1px; border-style: none; background: #cccccc }
+
+span.entrytime
+{ float: right; font-family: Sans-Serif; font-size: 75%;
+  color: #888 }
+
+span.entrytitle
+{ margin-top: 10px; margin-bottom: 5px; font-weight: bold }
+
+a.entrylink
+{ font-family: Sans-Serif }
+
+span.indent
+{ margin-left: 30px; margin-right: 30px; display: block }
+
+span.mono
+{ font-family: Monospace; white-space: pre }
+
+#left
+{ float: left; margin-left: 5px; width: 95px; margin-right: 50px; }
+
+#main
+{ display: table }
+
+#right
+{ float: right; margin-left: 50px; width: 195px; margin-right: 5px; }
+
+#controlbar
+{ font-family: Sans-serif;
+  margin-left: 150px; margin-right: 250px; clear: both }
+
+--></style>
+<style>body { font-family: sans-serif; letter-spacing: 1px; line-height: 1.4; color: #004; background: #f4f8ff; margin-top: 0px; }
+#main { } 
+span.entrytitle, h1, h2, h3, h4, h5, h6 { text-align: left; color: #48c; }
+a:link { color: #088; }
+a:visited { color: #808; }
+</style>
+</head>
+<body>
+<link rel="icon" type="image/png" href="http://www.logarithmic.net/favicon.png">
+<div style="margin-left: 0px; margin-right: 0px; margin-top: 20px; "><div style="font-size: 40px; font-weight: bold; color: #48c; padding-top: 0.2em; padding-bottom: 0.2em; border-style: solid;
+border-top-width: 5px; border-left-width: 0px; border-right-width: 0px; border-bottom-width: 5px; text-align: left; ">Aether</div>
+
+<p><font face="Sans-Serif">
+  <a href="http://www.logarithmic.net/pfh/">home</a> • 
+  <a href="http://www.logarithmic.net/pfh/blog">blog</a> • 
+  <a href="https://twitter.com/paulfharrison">twitter</a> •
+  <a href="http://www.thingiverse.com/pfh/designs/">thingiverse</a> 
+</font>
+
+
+</p><p><br></p></div>
+<div id="left"><br></div>
+<div id="right">
+<font size="-2"><a href="http://www.logarithmic.net/pfh/aether#1"># Features</a><br><a href="http://www.logarithmic.net/pfh/aether#2"># Download</a><br><a href="http://www.logarithmic.net/pfh/aether#3"># Installation</a></font>
+<br></div>
+<div id="main">
+
+Aether is a Python CGI-script for managing weblogs ("blogs") and 
+web-sites. It allows you to manage a site entirely from the web, like a 
+wiki. I created it primarily to manage this site. You may also find it 
+useful.
+
+<p>I have found that being able to update my web-site from any browser, 
+anywhere, encourages me to keep my site up to date, and to fix typos and
+ so-forth. Managing a site from the web also makes it easy for a group 
+of people to collaboratively maintain it.
+
+</p><p>Aether is designed for use with Apache. It may work with other web-servers with minor alterations.
+
+</p><p></p><h2><a name="1">Features</a></h2>
+<ul><li>Trivial to install.</li></ul>
+<ul><li>Create, edit, move and delete pages.</li></ul>
+<ul><li>Create and add entries to weblogs.</li></ul>
+<ul><li>Atom feed from weblogs.</li></ul>
+<ul><li>Attach files and images to pages.</li></ul>
+<ul><li>Basic revision tracking: view changes to a page, revert to previous version of a page.</li></ul>
+<ul><li>Everything uses unicode: page text, file-names, urls.</li></ul>
+<ul><li>Works as an Apache ErrorDocument, and so can be overlayed over an existing site.</li></ul>
+<ul><li>Sub-directories may be used to organize the site. A page may even have the same name as a sub-directory.</li></ul>
+<ul><li>Add features easily (in Python).</li></ul>
+<ul><li>Readable code.</li></ul>
+
+<p><a href="http://www.logarithmic.net/pfh?action=manual">Read the manual</a> for specifics, or look at these examples of page markup: <a href="http://www.logarithmic.net/pfh/aether?action=showcode">this page</a>, <a href="http://www.logarithmic.net/pfh/blog?action=showcode">my blog</a>, <a href="http://www.logarithmic.net/pfh/default?action=showcode">my default page layout</a>.
+
+</p><p>To demonstrate how Aether can be extended, here's the extra code i've added for this site: <a href="http://www.logarithmic.net/pfh/default?action=showself">_code.py</a>.
+
+</p><p><a href="http://www.baum.com.au/~jiri/ae/blog">Jiří Baum</a> offers <a href="http://www.baum.com.au/~jiri/ae-misc.py">these further extensions</a>: random page, underline, comment, currently playing iRATE track, phase of the moon.
+
+</p><p></p><h3>Still to do</h3>
+<ul><li>Comment pages for weblogs.</li></ul>
+<ul><li>Recent changes, as in UseMod.</li></ul>
+<ul><li>Polish Wiki mode.</li></ul>
+
+<p></p><h3>Never to do</h3>
+<ul><li>Use a database (everything is stored in text files).</li></ul>
+<ul><li>Accounts and log-ins.</li></ul>
+<ul><li>Complex interface.</li></ul>
+
+<p></p><h2><a name="2">Download</a></h2>
+
+<p>Aether is a single file:
+
+</p><p></p><ul><li><a href="http://www.logarithmic.net/pfh-files/aether/aether-1.7">aether-1.7</a></li></ul>
+
+<p>Aether is released under the GPL.
+
+</p><p></p><h2><a name="3">Installation</a></h2>
+
+<p>Installing Aether should be easy. If not, it's a bug.
+
+</p><p></p><ul><li>Make sure Python 2.2 is installed on your web-server (or Python 2.3, but you'll have to edit the first line of the script).</li></ul>
+<ul><li>Download Aether and copy it to your web-site. Rename it to the name you want to call the site.</li></ul>
+<ul><li>Set up Apache to treat the script as a CGI. For example, you 
+might put the following in the ".htaccess" file for the directory the 
+script is in:</li></ul>
+
+<p></p><pre>      &lt;Files myaethersite&gt;
+      Options +ExecCgi
+      SetHandler cgi-script
+      &lt;/Files&gt;
+</pre>
+
+<p></p><ul><li>View the script with a web browser.</li></ul>
+
+<p>When first run, Aether will create two new directories in the same 
+directory as you installed it in. One is for storing attached files, and
+ is named "myaethersite-files". The other is for storing pages and is 
+called "myaethersite-data". (the directory names are based on the name 
+of the script, you may install multiple copies of Aether in one 
+directory)
+
+</p><p>In the data directory, Aether will create a file called 
+"_code.py". This contains the password for editing your pages. You can 
+use the random password Aether selects, or edit the file to choose your 
+own password.
+
+</p><p></p><ul><li>Edit pages by entering the password in the [edit ___]
+ box at the bottom of a page. This also works for pages that don't exist
+ yet: you will get a 404, but you'll be able to create the page using 
+the [edit ___] box.</li></ul>
+
+<p>Note that as Aether creates files, the directory it is running in 
+must have the correct owner and permissions to allow this. This will 
+generally only be a problem on a web-server you have configured and run 
+yourself.
+
+</p><p></p><h3>Aether as an ErrorDocument</h3>
+
+<p>Aether may be used as an Apache ErrorDocument. That is, instead of 
+displaying a 404 Apache will invoke Aether. This allows you to overlay 
+an Aether site over, say, an existing site written in straight HTML.
+
+</p><p>Put something like this in the ".htaccess" file:
+
+</p><p></p><pre>    &lt;Files aether&gt;
+    Options +ExecCgi
+    SetHandler cgi-script
+    BrowserMatch .* AETHER_ROOT=/url/of/this/directory
+    &lt;/Files&gt;
+
+    Options -Indexes
+    ErrorDocument 403 /url/of/aether
+    ErrorDocument 404 /url/of/aether</pre>
+
+<p>(note: it would be more sensible to use "SetEnv AETHER_ROOT 
+/usr/of/this/directory" instead of the BrowserMatch line, but 
+BrowserMatch is more likely to be available on your web server) 
+
+</p><p>To create a site with different passwords for different areas, or
+ with an area with no password, use several copies of Aether as 
+ErrorDocuments of different directories.
+</p></div>
+<br clear="all">
+
+
+
+<p><br><br></p><div id="controlbar">
+ 
+<script type="text/javascript">
+    var YWPParams = 
+    {
+        volume:1.0,
+    };
+</script>
+<script type="text/javascript" src="Aether_files/player-beta.js">
+</script>
+<!-- <script type="text/javascript" src="http://mediaplayer.yahoo.com/js"></script> -->
+
+<table width="100%"><tbody><tr><td align="right">
+
+<form method="post" accept-charset="utf-8" action="http://www.logarithmic.net/pfh"><input name="action" value="edit" type="hidden"><input name="name" value="aether" type="hidden"><input name="submit" value="edit" type="submit"><input name="password" size="3" type="password"></form> <a href="http://www.logarithmic.net/pfh/aether">[æ]</a>
+</td></tr></tbody></table></div>
+
+</body></html>

@@ -1,0 +1,2111 @@
+#!/usr/bin/env python
+
+#    Copyright (C) 2004 Paul Harrison
+#    This program is free software; you can redistribute it and/or modify
+#    it under the terms of the GNU General Public License as published by
+#    the Free Software Foundation; either version 2 of the License, or
+#    (at your option) any later version.
+#
+#    This program is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU General Public License for more details.
+#
+#    You should have received a copy of the GNU General Public License
+#    along with this program; if not, write to the Free Software
+#    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+
+""" Aether - web/blog script
+    
+    Aether is a script for managing blogs and web pages entirely from the web.
+
+Design goals:
+
+    The script should readable.
+
+    All operations should be trivial, and part of the usual interface:
+
+      * Editing pages
+      * Creating pages and deleting pages
+      * Renaming pages
+      * Attaching files and deleting files
+
+    The interface itself should be minimal and functional. "Features" are to
+    be minimized:
+
+      * No login, no cookies
+      * All admin functions on the page itself (elegantly and discretely)
+      * No secret interfaces, no codes to remember
+
+    The script should handle anything that is thrown at it:
+
+      * Unicode in pages
+      * Unicode page names
+      * Page and file names containing < > & " and whitespace
+
+
+    Aether is based around an extensible markup language (not XML), which is
+    translated to HTML on the fly. Features such as blogging are implemented as
+    markup functions.
+
+Change log:
+  1.1 - 19 March 2004
+    Initial release.
+
+  1.2 - 29 March 2004
+    Support for ErrorDocument, based on a patch by Neil Brown.
+    Simplified security model (old model unnecessary given ErrorDocument, 
+        just use multiple copies of script)
+    _code.py now evalfile'd not imported
+    More comments.
+    Note: remove "import script" line from _code.py when upgrading from 1.1
+
+  1.3 -
+    Locking added.
+    Page content sent before sidebars (using CSS tomfoolery).
+    [left] [right] tags behave differently, [top] [bottom] tags added.
+    "standard_header" page no longer used, instead use page called "default"
+        (header may now be set using the [top] tag).
+    Allow use of variables before they are set (eg [_insert_later] tag).
+    [toc] table of contents.
+    Style-sheet may be modified using the [style] tag (eg in "default" page).
+
+  1.4 -
+    Basic revision tracking.
+    Attachments form converted to <iframe>, attaching a file no longer
+        discards your edits.
+    Edit page refers to URL, rather than "page name".
+        (people were confusing "page name" and [title])
+    URL quoting bug removed.
+    [span] tag added.
+
+  1.5 -
+    Fixes to HTML generation.
+    [entry] no longer needed in blog entry (no real point to having it).
+    [tail-length], [keyword], [no-interface] options added to blog.
+    Blogs in ErrorDocument mode (action=all, action=atom use script_base).
+    [search-form] tag added, search form no longer appears by default.
+  
+  1.6 -
+    Atom feed now works for top page.
+    make_diff optimized.
+    Unicode functions renamed.
+    Aether may now be imported from another module.
+        (if you want to do this, you have to set some global variables before
+         calling main(), etc)
+    _code.py may redefine main()
+
+  1.7 -
+    Superfluous "/" removed from URL of attachments to root.
+    List size of attached sizes (thanks njh).
+    Locking disabled (more trouble than worth).
+    Correctly show columns in IE / Safari.
+    
+"""
+
+__version__ = '1.7'
+
+# TODO: does attaching files with unicode filenames work?
+#       (mozilla crashes!)
+# TODO: pages with names containing "?"   (!)
+
+# Assumptions:
+#   Unix-style paths, /
+#   Unicode text
+#   Unicode filename
+
+# Filenames beginning with "_" are special.
+
+# Attached files:
+#   Separate attachment directory, attached files served directly by apache
+#   though managed by Aether.
+
+
+import sys, os, time, string, re
+from os import path
+
+this_module = sys.modules[__name__]
+
+
+class Error: 
+    def __init__(self, message):
+        self.message = message
+
+    def __repr__(self):
+        return 'Error: ' + self.message
+
+
+# Unicode --------------------------------------------------------------------
+
+# Encode parameters in utf-8 before passing to standard functions.
+
+def utf8_exists(filename):
+    return path.exists(filename.encode('utf-8'))
+
+def utf8_isdir(filename):
+    return path.isdir(filename.encode('utf-8'))
+
+def utf8_isfile(filename):
+    return path.isfile(filename.encode('utf-8'))
+
+def utf8_listdir(filename):
+    result = os.listdir(filename.encode('utf-8'))
+    
+    for i in xrange(len(result)):
+        result[i] = result[i].decode('utf-8')
+
+    return result
+
+def utf8_unlink(filename):
+    os.unlink(filename.encode('utf-8'))
+
+def utf8_rename(filename, new_filename):
+    os.rename(filename.encode('utf-8'), new_filename.encode('utf-8'))
+
+def utf8_mkdir(dir):
+    os.mkdir(dir.encode('utf-8'))
+
+def utf8_rmdir(dir):
+    os.rmdir(dir.encode('utf-8'))
+
+def utf8_open(filename, mode):
+    return __builtins__.open(filename.encode('utf-8'), mode)
+
+def utf8_gzip_open(filename, *args):
+    import gzip
+    return gzip.open(filename.encode('utf-8'), *args)
+
+
+# Locking ---------------------------------------------------------------------
+
+def lock():
+    """ Acquire lock for access to files. 
+        Lock can not be held for more than ten seconds.
+        Do not communicate with Apache while the lock is held,
+            as network traffic can take arbitrary time. 
+            
+        Disabled. """
+    pass
+    
+#    filename = (data_dir+u'/_lock').encode('utf-8')
+#    
+#    try:
+#        begin = os.stat(filename).st_mtime
+#    
+#        if abs(time.time()-begin) > 10.0:
+#            os.utime(filename, None)
+#            return
+#        # Note: race condition between stat and utime.
+#    
+#    except OSError:
+#        pass
+#    
+#    for i in xrange(100):
+#        try:
+#            os.mkdir(filename)
+#            return
+#        except OSError:
+#            pass
+#    
+#        time.sleep(0.1)
+#    
+#    raise Error('System overloaded')
+
+
+def unlock():
+    """ Release lock on access to files. """
+    pass
+
+    #utf8_rmdir(data_dir+u'/_lock')
+
+
+
+# File reading/writing -------------------------------------------------------
+
+def check_for_filename_hack(filename):
+    """ Check for attempt to write to parent directory or special file. """
+    if len(filename) < 1 or \
+       filename[:1] in (u'.', u'_') or \
+       u'/' in filename:
+        raise Error('Hack attempt: '+repr(filename))
+
+
+def check_for_path_hack(path):
+    """ Check for attempt to write to parent directory or special file. """
+    if path[:1] in (u'.',u'_',u'/') or \
+       path.find(u'//') != -1 or \
+       path.find(u'/.') != -1 or \
+       path.find(u'/_') != -1:
+        raise Error('Hack attempt: '+repr(path))
+
+
+def ensure_dir_exists(dir):
+    """ Ensure a directory exists, move file out of way if necessary.
+        (rename to dir/_index). """
+
+    if utf8_isdir(dir):
+        return
+
+    if utf8_isfile(dir):
+        # TODO: do nicerly somehow
+        utf8_mkdir(dir+u'-TEMP')
+        utf8_rename(dir, path.join(dir+u'-TEMP',u'_index'))
+        utf8_rename(dir+u'-TEMP', dir)
+        return
+
+    ensure_dir_exists(path.dirname(dir))
+    utf8_mkdir(dir)
+
+
+def correct_case(name):
+    """ Modify case in <name> to match existing page or directory. 
+        (to let page URLs not be case sensitive) """
+
+    if not name:
+        return name
+
+    if utf8_exists(path.join(data_dir,name)):
+        return name
+
+    dir, name = path.split(name)
+    dir = correct_case(dir)
+
+    names = list_names(dir)
+    for this_name, full_name in names:
+        if this_name.lower() == name.lower():
+            name = this_name
+            break
+
+    return path.join(dir,name)
+
+
+def _get_filename(name, prefix=u'', postfix=u'', append__index=True):
+    """ Get the filename corresponding to a page name.
+
+        Page name is checked for hack attempts such as ../something, _code.py.
+
+        Special files may refered to by providing a prefix and/or postfix
+        (used by revision handling)."""
+    check_for_path_hack(name)
+
+    filename = path.normpath(path.join(data_dir,prefix,name,postfix))
+
+    if append__index and utf8_isdir(filename):
+        filename = path.join(filename, '_index')
+
+    return filename
+    
+
+def load(name, prefix=u'', postfix=u'', compressed=False):
+    """ Load a page. Returns contents of page file as unicode string. """
+
+    filename = _get_filename(name, prefix, postfix)
+
+    if not utf8_isfile(filename):
+        raise Error('File does not exist')
+
+    if compressed:
+        file = utf8_gzip_open(filename, 'rb')
+    else:
+        file = utf8_open(filename, 'rb')
+    
+    text = file.read()
+    file.close()
+
+    text = text.decode('utf-8')
+
+    return text
+
+
+def save(text, name, prefix=u'', postfix=u'', compress=False):
+    """ Save text in a page file. """
+
+    filename = _get_filename(name, prefix, postfix, False)
+
+    if utf8_isdir(filename):
+        # is it empty or not?
+        if utf8_listdir(filename.encode('utf-8')):     
+            filename = path.join(filename,'_index')
+        else:
+            utf8_rmdir(filename)
+
+    dir = path.dirname(filename)
+    ensure_dir_exists(dir)
+
+    if isinstance(text, unicode):
+        text = text.encode('utf-8')
+
+    if compress:
+        file = utf8_gzip_open(filename, 'wb', 9)
+    else:
+        file = utf8_open(filename, 'wb')
+    
+    file.write(text)
+    file.close()
+
+
+def remove(name, prefix=u'', postfix=u''):
+    """ Delete a page file. """
+
+    filename = _get_filename(name, prefix, postfix)
+
+    if not utf8_exists(filename):
+        return
+
+    utf8_unlink(filename)
+
+
+def exists(name, prefix=u'', postfix=u''):
+    """ Does a page file exist for <name>? """
+
+    filename = _get_filename(name, prefix, postfix)
+
+    return utf8_exists(filename)
+
+
+def list_names(name, prefix=u'', postfix=u''):
+    """ List contents of a directory. """
+
+    name = correct_case(name)
+    filename = _get_filename(name, prefix, postfix, False)
+
+    if not utf8_isdir(filename):
+        return [ ]
+
+    files = utf8_listdir(filename)
+    files.sort()
+
+    # TODO: convert to unicode
+
+    files = filter(lambda name: name[:1] not in ('.','_'), files)
+
+    for i in xrange(len(files)):
+        files[i] = (files[i], path.join(name,files[i]))
+
+    return files
+
+
+
+# Time ------------------------------------------------------------------------
+
+def now():
+    """ Return time in seconds since unix epoch, as an 11 digit decimal. """
+    return '%011d' % long(time.time())
+
+
+def describe_time(t):
+    """ Produce a human readable description of a time.
+
+        Note: Aether ignores local time. All times are UTC. 
+            (as it is common for both readers and authors to be in timezones
+             other than that of the server, local time has little meaning) """
+        
+    tuple = time.gmtime(long(t))
+    return '%d %s %d, %d:%02d UTC'% \
+        (tuple[2], time.strftime('%B',tuple), tuple[0], tuple[3], tuple[4])
+
+
+def w3c_time(t):
+    """ Produce a W3C standard time string. """
+    
+    tuple = time.gmtime(int(t))
+    return time.strftime('%Y-%m-%dT%H:%M:%SZ', tuple)
+
+
+
+# Urls -----------------------------------------------------------------------
+
+def name_to_url(name):
+    """ URL of page named <name> """
+    return host_url + page_base + u'/' + name
+
+
+def attachment_to_url(name, filename):
+    """ URL of file <filename> attached to page <name> """
+
+    if name:
+        filename = name + u'/' + filename
+
+    return host_url + file_base + u'/' + filename
+
+
+def make_form(content, method=u'post', extra_options=u'', **hiddens):
+    """ Construct an HTML form. """
+
+    result = u'<form method=' + method + \
+             u' accept-charset="utf-8" action="' + \
+             quote_html(host_url+script_base) + u'" ' + \
+             extra_options + u'>'
+
+    for key in hiddens:
+        result += u'<input type=hidden name=' + key + ' value="' + \
+                  quote_html(hiddens[key]) + u'">'
+
+    result += content + u'</form>'
+    return result
+    
+
+
+# Quoting ---------------------------------------------------------------------
+
+html_quote_sequence = [
+    (u'&', u'&amp;'),
+    (u'<', u'&lt;'),
+    (u'>', u'&gt;'),
+    (u'"', u'&quot;')
+]
+
+html_unquote_sequence = html_quote_sequence[:]
+html_unquote_sequence.reverse()
+
+
+def quote_html(text, markup_newlines=False):
+    """ Convert special HTML characters to &xyz; form. 
+        If <markup_newlines>, convert newlines into <p> tags, etc. """
+
+    for a, b in html_quote_sequence:
+        text = text.replace(a, b)
+
+    if markup_newlines:
+        text = re.sub(ur'\n[ \r\t]*(\n[ \r\t]*)+', 
+            lambda match: 
+                match.group(0) +
+                u'<p>' + u'<br>'*(match.group(0).count(u'\n')-2),
+            text)
+
+    return text
+
+
+def unquote_html(text):
+    """ Precisely undo quote_html. 
+    
+        Also strips HTML tags. """
+
+    text = re.sub(u'<[^>]*>', u'', text)
+
+    for a, b in html_unquote_sequence:
+        text = text.replace(b, a)
+
+    return text
+
+
+def quote_markup(text):
+    """ Escape special characters used by Aether markup language. """
+    text = re.sub(ur'([\\\[\]])', ur'\\\1', text)
+    return text
+
+
+def unquote_markup(text):
+    """ Precisely undo changes made by quote_markup. """
+    text = re.sub(ur'\\([\\\[\]])', ur'\1', text)
+    return text
+
+
+def quote_paranoid(text):
+    """ Convert utf-8 string to sequence of lower case English characters. """
+
+    text = text.encode('utf-8')
+
+    result = ''
+    for char in text:
+        result += chr(ord('a') + ord(char)/16) +\
+                  chr(ord('a') + ord(char)%16)
+
+    return result
+
+
+def unquote_paranoid(text):
+    """ Precisely undo the mapping performed by quote_paranoid. """
+
+    result = ''
+
+    text = text.lower()
+    for i in xrange(0,len(text),2):
+        result += chr(
+            (ord(text[i])-ord('a'))*16 +
+            (ord(text[i+1])-ord('a'))
+            )
+
+    return result.decode('utf-8')
+
+# Diff ------------------------------------------------------------------------
+
+def _diff_summarize(sequence, start, end, 
+                    is_start=False, is_end=False):
+    stops = [ ]
+
+    if is_start: stops.append(start)
+        
+    for i in xrange(start+4,end-3):
+        if sequence[i-1] == u'\n' or \
+           (sequence[i-1][:-1].isalpha() and sequence[i-1][-1:] in u'.?!:;'):
+            stops.append(i)
+
+    if is_end: stops.append(end)
+        
+    if len(stops) < 2:
+        result = sequence[start:end]
+    else:
+        result = sequence[start:stops[0]] + [u'...'] + sequence[stops[-1]:end]
+
+    result = quote_html(string.join(result,u' '))
+    result = result.replace(u'\n', 
+                            u' <span style="font-size: 66%">/</span> ')
+    return result
+
+
+def make_diff(old, new):
+    """ Produce a human readable HTML diff of two strings. """
+    import difflib
+
+    old = re.split(u' +', old.replace(u'\n', u' \n ').replace(u'\r',u''))
+    new = re.split(u' +', new.replace(u'\n', u' \n ').replace(u'\r',u''))
+    
+    matches = difflib.SequenceMatcher(None, old, new).get_matching_blocks()
+
+    if matches[0][0] != 0 or matches[0][1] != 0:
+        matches.insert(0,(0,0,0))
+
+    horizon_old = 0
+    horizon_new = 0
+    result = u''
+    for (old1,new1,len1),(old2,new2,len2) in map(None,matches[:-1],matches[1:]):
+        result += u'<span style="color: #888">' + \
+            _diff_summarize(old, horizon_old, old1+len1,
+            horizon_old == 0 and horizon_new == 0,
+            old1+len1 == len(old) and new1+len1 == len(new)) + \
+            u'</span> '
+
+        if old1+len1 != old2:
+            result += u'<strike style="color: #888">' + \
+                      _diff_summarize(old,old1+len1,old2).strip() + \
+                      u'</strike> '
+
+        if new1+len1 != new2:
+            result += _diff_summarize(new,new1+len1,new2) + u' '
+
+        horizon_old = old2
+        horizon_new = new2
+
+    return result
+
+
+
+# HTML generation (markup) ----------------------------------------------------
+
+html_dtd = u'<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">\n'
+
+# (you may replace style_sheet with a "<link>" if you wish)
+style_sheet = u"""\
+<style><!--
+body
+{ background: #fff; }
+
+input, textarea
+{ border: solid 1px; border-color: #ccc }
+
+input[type="submit"]
+{ color: #00f; background: #ccc; }
+
+h1, h2, h3, h4, h5, h6, span.entrytitle
+{ font-family: Sans-Serif; font-weight: normal; color: #f80; 
+  display: block;
+  margin-top: 60px;
+  margin-bottom: 20px;
+  letter-spacing: 1px }
+
+h1
+{ margin-top: 30px }
+
+a
+{ text-decoration: none }
+
+table, tr, td
+{ border: 0px; padding: 0px; margin: 0px }
+
+form
+{ display: inline }
+
+hr
+{ height: 1px; border-style: none; background: #cccccc }
+
+span.entrytime
+{ float: right; font-family: Sans-Serif; font-size: 75%;
+  color: #888 }
+
+span.entrytitle
+{ margin-top: 10px; margin-bottom: 5px; font-weight: bold }
+
+a.entrylink
+{ font-family: Sans-Serif }
+
+span.indent
+{ margin-left: 30px; margin-right: 30px; display: block }
+
+span.mono
+{ font-family: Monospace; white-space: pre }
+
+#left
+{ float: left; margin-left: 5px; width: 95px; margin-right: 50px; }
+
+#main
+{ display: table }
+
+#right
+{ float: right; margin-left: 50px; width: 195px; margin-right: 5px; }
+
+#controlbar
+{ font-family: Sans-serif;
+  margin-left: 150px; margin-right: 250px; clear: both }
+
+--></style>"""
+
+# Default options for page layout
+# (may be overridden in page itself, or by a page named "default")
+default = u"""\
+[top [html <h1>][_insert_html_later title][html </h1>]]
+"""
+
+page_markup = u"""\
+[_insert_html _top]
+[html <div id=left>][_insert_html _left][html <br /></div>]
+[html <div id=right>][_insert_html _right][html <br /></div>]
+[html <div id=main>][_insert_html _page][html </div>]
+[html <br clear=all>]
+
+
+
+[html <div id=controlbar>]
+[_insert_html _bottom]
+[html <table width="100%"><tr><td align=right>]
+[_insert_html _control_bar_extra]
+[edit-link] [link [url http://www.logarithmic.net/pfh/aether] \[\u00e6\]]
+[html </td></tr></table></div>]
+"""
+
+
+def _split_command(thing):
+    """ (markup helper function) """
+    # ugliness because everything in html
+
+    match = re.search('(\s|\<p\>)', thing)
+    if match == None:
+        command = thing
+        text = u''
+    else:
+        command = thing[:match.start()]
+        text = thing[match.end():]
+
+    command = command.replace('-','_').lower()
+
+    return command, text
+
+
+def markup(text, meta=None, outermost=True):
+    """ Markup language translator.
+        Markup language is less ugly than html, a la wiki. 
+        Returns html text, modifies meta if given.
+
+        If the result will be used by another call to markup with
+        the same meta, set outermost to False.
+        (necessary to get postprocessing step right)
+
+        Special characters: [ ] \
+        Escaping: \[ \] \\
+
+        [blah some text]  results in a call to a function called markup_blah
+    """
+
+    if meta is None: meta = { }
+
+    chunks = re.split(ur'(\[|\]|\\\[|\\\]|\\\\)', text)
+
+    stack = [ u'' ]
+    context_stack = [ { } ]
+
+    for chunk in chunks:
+        if chunk == '[':
+            stack.append(u'')
+            context_stack.append({ })
+        elif chunk == ']' and len(stack) >= 2:
+            thing = stack.pop(-1)
+            thing_context = context_stack.pop(-1)
+
+            command, text = _split_command(thing)
+            
+            if len(stack) >= 2:
+                context = u'context_' + _split_command(stack[-1])[0]
+                context = getattr(this_module,context,[ ])
+            else:
+                context = [ ]
+
+            if command in context:
+                context_stack[-1][str(command)] = text 
+                text = u''
+            elif command + u'*' in context:
+                context_stack[-1][str(command)] = \
+                    context_stack[-1].get(str(command),[ ]) + [ text ] 
+                text = u''
+            else:
+                try:
+                    text = getattr(this_module, 'markup_'+command)(text, meta, **thing_context)
+                except:
+                    import StringIO, traceback
+                    string_file = StringIO.StringIO()
+                    traceback.print_exc(file=string_file)
+                    text = u'<b><pre>'+quote_html(string_file.getvalue())+u'</pre></b>'
+                
+            stack[-1] = stack[-1] + text
+        else:
+            if chunk in (u'\\]',u'\\[',u'\\\\'):
+                chunk = chunk[1]
+                
+            stack[-1] = stack[-1] + quote_html(chunk, True)
+
+    # should only be one item on stack, but don't freak if there's more
+    result = string.join(stack,u'')
+
+    if outermost:
+        for mark, callback in meta.get('_callbacks',[]):
+            value = callback()
+            result = result.replace(mark, value)
+
+    return result
+
+_callback_counter = 0xe000 # Unicode private use area
+def make_callback_mark(meta, callback):
+    """ Utility for markup_ functions:
+        Return a special unicode character indicating that
+        the result of callback() should be inserted here.
+        
+        The callback will be called *after* all markup has occured. 
+        This allows inserting variables that have not been set yet,
+        and such. """
+
+    global _callback_counter
+    mark = unichr(_callback_counter)
+    _callback_counter += 1
+
+    meta['_callbacks'] = meta.get('_callbacks',[]) + [(mark, callback)]
+    return mark
+
+
+def markup__insert(text, meta):
+    return quote_html(meta.get(text.strip(), u''))
+
+
+def markup__insert_html(text, meta):
+    return meta.get(text.strip(), u'')
+
+
+def markup__insert_later(text, meta):
+    def callback():
+        return quote_html(meta.get(text.strip(), u''))
+
+    return make_callback_mark(meta, callback)
+
+
+def markup__insert_html_later(text, meta):
+    def callback():
+        return meta.get(text.strip(), u'')
+
+    return make_callback_mark(meta, callback)
+
+
+def markup_html(text, meta):
+    """ Insert some HTML tags.
+    
+        Example:
+          [html <b>hello</b> ]"""
+
+    return unquote_html(text)
+
+
+def markup_style(text, meta):
+    """ Add to the HTML style sheet.
+
+        Example:
+            [style
+              body { background: #88f }
+            ] """
+
+    meta['_head_extra'] = meta.get('_head_extra',u'') + u'<style>' + \
+                          unquote_html(text) + u'</style>'
+    return u''
+
+
+
+def _resolve_url(text, meta, url, page, file, must_be_file=False):
+    """ Helper for markup_link, markup_image
+
+        url, page, file are html
+        
+        returns url as text, link-text as html"""
+        
+    text = text.strip()
+
+    if page != None:
+        page = page.strip()
+        correct_page = correct_case( unquote_html(page) )
+
+    if file != None: 
+        file = file.strip()
+    
+    if url != None: 
+        url = url.strip()
+        url = unquote_html(url)
+    else:
+        if page != None and file != None:
+            url = attachment_to_url(correct_page, unquote_html(file))
+            if not text: text = file
+
+        elif file != None:
+            url = attachment_to_url(meta['name'], unquote_html(file))
+            if not text: text = file
+
+        elif page != None and not must_be_file:
+            url = name_to_url(correct_page)
+            if not text: text = page
+
+        elif not must_be_file:
+            url = unquote_html(text)
+            if re.match(u'[A-Za-z]+:', url) is None:
+                url = name_to_url( correct_case(url) )
+
+        else:
+            raise Error('Nothing to link to')
+    
+    if not text: text = quote_html(url)
+
+    return text, url
+
+
+context_link = ['url','page','file']
+def markup_link(text, meta, url=None, page=None, file=None):
+    """ Insert a link.
+    
+        Examples:
+           [link somepage]    
+           (or [link [page somepage]] )
+               - link to page called somepage
+
+           [link This is the page. [page somepage]]    
+               - link with text different to page name
+
+           [link [file myfile.pdf]]
+               - link to file attached to this page
+
+           [link [page otherpage] [file otherfile.pdf]]
+               - link to file attached to another page
+
+           [link [url http://some.url.org]]
+           (or [link http://some.url.org] )
+               - link to a url
+               
+    """
+
+    text, url = _resolve_url(text, meta, url, page, file)
+
+    return u'<a href="' + quote_html(url) + u'">' + text + '</a>'
+
+
+context_image = ['url','page','file','title']
+def markup_image(text, meta, url=None, page=None, file=None, title=None):
+    """ Insert an image.
+
+        Parameters as per [link]. """
+    
+    text, url = _resolve_url(text, meta, url, page, file, True)
+
+    if title == None:
+        title = u''
+    else:
+        title = u' title="' + quote_html(title) + '"'
+
+    return u'<img src="' + quote_html(url) + '"' + title + u'>'
+
+
+def markup_heading(text, meta):
+    """ Heading.
+
+        Example:
+           [heading Introduction] """
+
+    meta['_headings'] = meta.get('_headings',[]) + [ text ]
+           
+    return u'<h2><a name="' + str(len(meta['_headings'])) + u'">' + \
+           text + u'</a></h2>'
+
+
+def markup_subheading(text, meta):
+    """ Sub-heading.
+
+        Example:
+           [subheading Implementation details] """
+
+    return u'<h3>'+text+u'</h3>'
+
+
+def markup_toc(text, meta):
+    """ Table of contents.
+
+        List all [heading]s. """
+
+    def callback():
+        result = [ ]
+        headings = meta.get('_headings',[ ])
+        for i in xrange(len(headings)):
+            result.append(
+                u'<a href="' + quote_html(name_to_url(meta['name'])) + u'#' +
+                str(i+1) + u'"># ' + headings[i] + '</a>'
+            )
+
+        return string.join(result, u'<br>')
+
+    return make_callback_mark(meta, callback)
+
+def markup_line(text, meta):
+    """ Display text on separate line.
+
+        Example:
+           One must consider:
+
+           [line 1. What?]
+           [line 2. Where?]
+           [line 3. Why?] """
+
+    return u'<br>'+text
+
+
+def markup_rule(text, meta):
+    """ Draw a horizontal line.
+
+        Example:
+           [rule] """
+
+    return u'<hr>'+text
+
+
+def markup_bullet(text, meta):
+    """ Bullet point.
+
+        Example:
+           [bullet New nation]
+           [bullet Civil war]
+           [bullet Dedicate field]
+           [bullet Dedicated to unfinished work]
+           [bullet New birth of freedom]
+           [bullet Government not perish] """
+
+    return u'<ul><li>'+text+u'</li></ul>'
+
+
+def markup_small(text, meta):
+    """ Smaller font size.
+
+        Example:
+           [right [small It's an interesting fact that in... ]] """
+           
+    return u'<font size=-2>'+text+u'</font>'
+
+
+def markup_bold(text, meta):
+    """ Bold text.
+
+        Example:
+           Well, that was [bold startling]! """
+           
+    return u'<b>'+text+u'</b>'
+
+
+def markup_mono(text, meta):
+    """ Monospaced text. All formatting will be preserved.
+    
+        Example:
+           Here is some code to mark up [mono italic] text:
+           
+           [mono
+              def markup_italic(text, meta):
+                  return u'<i>'+text+u'</i>'
+           ] """
+
+    # Remove <p>s, <br>s inserted by quote_html
+    text = text.replace(u'<p>', u'')
+    text = text.replace(u'<br>', u'')
+    
+    # Workaround for mozilla bug
+    #text = re.sub(ur'(\n\r?)', ur'\1 ', text)
+    
+    #Hmm
+    if '\n' in text:
+        return u'<pre>'+text+u'</pre>'
+    else:
+        return u'<span class="mono">'+text+u'</span>'
+
+
+def markup_sans(text, meta):
+    """ Sans-serif text.
+
+        Example:
+           [sans [link Home [page home]]] """
+
+    return u'<font face="Sans-Serif">'+text+u'</font>'
+
+
+def markup_indent(text, meta):
+    """ Indent text.
+
+        Example:
+           Douglas Adams once wrote:
+           
+           [indent Anyone who is capable of getting themselves made President 
+           should on no account be allowed to do the job.] """
+            
+    return u'<span class=indent>'+text+u'</span>'
+
+
+def markup_italic(text, meta):
+    """ Italic text.
+
+        Example:
+           A [italic non-linear causal predictor] was used. """
+           
+    return u'<i>'+text+u'</i>'
+
+# Spelling mistake in earlier version :-o
+def markup_itallic(text, meta):
+    return u'<i>'+text+u'</i>'
+
+
+context_span = [ 'style' ]
+def markup_span(text, meta, style=u''):
+    """ Generic markup tag:
+        A span of text with different CSS style.
+
+        Example:
+           [span I'm huge! [style font-size: 300%]]  """
+
+    return u'<span style="' + style + u'">' + text.strip() + u'</span>'
+
+
+context_div = [ 'style' ]
+def markup_div(text, meta, style=u''):
+    """ Generic markup tag:
+        A div of text with different CSS style.
+
+        Example:
+           [div I'm floating! [style float: right]] """
+
+    return u'<div style="' + style + u'">' + text.strip() + u'</div>'
+
+
+def markup_title(text, meta):
+    """ Specify the title of the page.
+
+        Example:
+           [title Home] """
+           
+    meta['title'] = unquote_html(text)
+    return u''
+
+
+def markup_summary(text, meta):
+    """ Mark a range of text as a summary or abstract. When used in a blog
+        entry, only the summary will appear on the main blog page. This tag
+        does not affect the appearance of the actual page.
+
+        Example:
+           [summary Python is a remarkable language.]
+
+           It has a number of useful features. """
+
+    meta['summary'] = text
+    return text
+
+
+def _border_helper(border, text, meta, prepend=None, append=None):
+    if prepend != None:
+        meta[border] = text + meta.get(border, u'')
+    elif append != None:
+        meta[border] = meta.get(border, u'') + text
+    else:
+        meta[border] = text
+
+
+context_top = [ 'prepend', 'append' ]
+def markup_top(text, meta, **options):
+    """ Specify text for top of page. Options as per [left]. """
+
+    _border_helper('_top', text, meta, **options)
+    return u''
+
+
+context_left = [ 'prepend', 'append' ]
+def markup_left(text, meta, **options):
+    """ Specify text for left of page. 
+    
+        By default, replaces any previously specified text,
+        use the flags [prepend] or [append] to override this.
+
+        I suggest using [left] as a menu bar for navigating your site.
+
+        Examples:
+           [left Menu bar...]
+
+           [left [append] See also in this site...]
+
+           [left [prepend] Table of contents...] """
+
+    _border_helper('_left', text, meta, **options)
+    return u''
+
+
+context_right = [ 'prepend', 'append' ]
+def markup_right(text, meta, **options):
+    """ Specify text for right of page. Options as per [left]. 
+    
+        I suggest using [right] for footnotes and links to
+        related external links of your site. """
+
+    _border_helper('_right', text, meta, **options)
+    return u''
+
+
+context_bottom = [ 'prepend', 'append' ]
+def markup_bottom(text, meta, **options):
+    """ Specify text for the bottom of page. Options as per [left]. 
+    
+        I suggest using [bottom] for copyright notices and disclaimers. """
+
+    _border_helper('_bottom', text, meta, **options)
+    return u''
+
+
+
+context_include = ['default']
+def markup_include(text, meta, default=u''):
+    # Insert one page into another.
+    # (i'm still thinking about how to do this well, eg inserting only part of
+    #  a page...)
+
+    name = text.strip()
+
+    old_name = meta.get('name', None)
+    older_name = meta.get('outer_name', None)
+
+    if old_name == None:
+        if 'outer_name' in meta: del meta['outer_name']
+    else:
+        meta['outer_name'] = old_name
+
+    meta['name'] = name
+
+    try:
+        result = markup(load(name), meta, False)
+    except Error:
+        result = default
+
+    if old_name == None:
+        if 'name' in meta: del meta['name']
+    else:
+        meta['name'] = old_name
+
+    if older_name == None:
+        if 'outer_name' in meta: del meta['outer_name']
+    else:
+        meta['outer_name'] = older_name
+
+    return result
+
+
+def markup_search_form(text, meta):
+    """ Insert a simple search form.
+    
+        Example:
+            [bottom [search-form]] """
+            
+    return make_form(
+        u'<input name=search><input type=submit name=submit value=search>', 
+        'get', action=u'search')
+
+
+def markup_edit_link(text, meta):
+    if 'name' not in meta or '_editing' in meta:
+        return u''
+
+    if password:
+        password_field = u'<input type=password name=password size=3>'
+    else:
+        password_field = u''
+
+    return make_form(
+            u'<input type=submit name=submit value=edit>' +
+            password_field,
+            action='edit', name=meta['name'])
+
+
+def markup_keyword(text, meta):
+    """ Associate a keyword with a page.
+
+        It is possible to create a blog that displays only blog entries
+        with certain keywords (see [blog]).
+
+        Example:
+            [title My exciting holiday]
+            [keyword hamster] [keyword bandages] """
+
+    meta['keywords'] = meta.get('keywords',[ ]) + [ unquote_html(text).strip() ]
+    return u''
+
+
+context_blog = [ 'location', 'author', 'email', 'tagline', 'length',
+                 'tail_length', 'keyword', 'no_interface' ]
+def markup_blog(text, meta, location=None, author=None, email=None, tagline=None, length=u'10', tail_length=u'20', keyword=u'', no_interface=None):
+    """ Insert a blog.
+
+        Optional parameters:
+          author - Your name.
+          email - Your email address.
+          tagline - A short description of the blog.
+
+          length - Number of entries to display on this page (default is 10).
+
+          tail-length - Number of headings for older entries to display
+                        (default is 20).
+
+          location - Path to blog entries (defaults to current page, which is
+                     what you want unless you're doing something weird).
+          
+          no-interface - (flag) no [new] box, atom feed, or older entries link
+                    (allows more than one blog per page, for example a
+                     separate blog in a sidebar. Suggest also setting up a
+                     distinct page for the sidebar to provide atom feed,
+                     archives, etc)
+
+          keyword - Only show blog entries with this keyword.
+                    (note: keyword implies [no-interface], currently)
+
+        Also provides an Atom XML feed, which should be detected automatically
+        by news aggregators.
+
+        You will be able to create new blog entries using the [new ___]
+        item at the bottom of the page.
+
+        Examples:
+           [title Joe blog]
+           [blog
+             [author Joe]
+             [email joe@joe.joe]
+             [tagline The life and times of Joe.]
+           ] """
+
+    if location == None:
+        location = meta['name']
+    else:
+        location = unquote_html(location).strip()
+
+    keyword = unquote_html(keyword).strip()
+
+    names = list_names(location)
+    names.reverse()
+
+    if meta.get('_blog_all'):
+        length = 0
+        shorts_length = len(names)
+    else:
+        length = int(length.strip())
+        shorts_length = int(tail_length.strip()) + length
+
+    result = [ ]
+    entries = [ ]
+    shorts = [ ]
+
+    n_entries = 0
+    latest = 0L
+
+    for name, full_name in names:
+        if not exists(full_name):
+            continue # directory
+
+        end = re.match('[0-9]*', name).end()
+        if end == 0:
+            continue
+
+        entry_text = load(full_name)
+        entry_meta = {'name' : full_name, 
+                      'outer_name' : meta['name']}
+        entry_text = markup(entry_text, entry_meta)
+        entry_text = entry_meta.get('summary', entry_text)
+
+        if keyword and keyword not in entry_meta.get('keywords',[ ]):
+            continue
+
+        entry_time = long(name[:end])
+        latest = max(latest, entry_time)
+        entry_title = entry_meta.get('title', 'Entry')
+
+        if n_entries >= length and n_entries < shorts_length:
+            if n_entries == length:
+                result.append('<p>')
+
+            short = (
+                u'<br><span class="entrytime">'+describe_time(entry_time)+u'</span>'+
+                markup_link(quote_html(entry_title), { }, page=quote_html(full_name))
+            )
+            
+            result.append(short)
+            shorts.append(short)
+
+        elif n_entries < length:
+            if 'summary' in entry_meta:
+                link_text = 'read more...'
+            else:
+                link_text = '[permalink]'
+
+            result.append(
+                u'<p><span class=entrytime>'+describe_time(entry_time)+u'</span>'+
+                u'<span class=entrytitle>'+entry_title+u'</span>'+
+                u'<br>'+entry_text+
+                u'<p>'+
+                markup_link(link_text, { }, page=quote_html(full_name)) +
+                u'<p><br>'
+            )
+
+            entries.append(
+                u'<entry>\n'
+                u'<title>' + entry_title + u'</title>\n' +
+                u'<issued>' + w3c_time(entry_time) + u'</issued>\n' +
+                u'<modified>' + w3c_time(entry_time) + u'</modified>\n' +
+                u'<id>' + quote_html(name_to_url(full_name)) + u'</id>\n' +
+                u'<link rel="alternate" type="text/html" href="' + 
+                   quote_html(name_to_url(full_name)) + u'"/>\n'+
+                u'<content type="text/html" mode="escaped">' +
+                   quote_html(entry_text) + u'</content>\n' +
+                u'</entry>'
+            )
+
+        n_entries += 1
+
+    if no_interface == None:
+        if '_blog_entries' in meta:
+            raise Error('Two blogs on one page: '
+                        'please use [no-interface] flag in one of the blogs.')
+            
+        result.append(u'<p><a href="' + 
+                      quote_html( host_url + script_base +
+                        u'?action=all;hasname=1;name=' + 
+                        quote_paranoid(meta['name']) ) +
+                      u'">All older entries</a>')
+
+        entry_name = path.join(location,now())
+
+        meta['_blog_entries'] = entries
+        meta['_blog_shorts'] = shorts #(for index page)
+
+        meta['_blog_modified'] = latest
+
+        if author:
+            meta['_blog_author'] = unquote_html(author)
+
+        if email:
+            meta['_blog_email'] = unquote_html(email)
+
+        if tagline:
+            meta['_blog_tagline'] = unquote_html(tagline)
+
+        atom_url = quote_html( host_url + script_base + 
+                u'?action=atom;hasname=1;name=' + quote_paranoid(meta['name']) )
+        
+        meta['_head_extra'] = meta.get('_head_extra',u'') + (
+                      u'<link rel="alternate" type="application/atom+xml" ' +
+                      u'title="Atom feed" href="' + atom_url + u'">' )
+                        
+        if password:
+            password_field = u'<input type=password name=password size=3>'
+        else:
+            password_field = u''
+
+        meta['_control_bar_extra'] = meta.get('_control_bar_extra',u'') + (
+                      u' <a href="' + atom_url + u'">[atom feed]</a> &nbsp; ' +
+                      make_form(
+                        u'<input type=submit name=submit value=new>' +
+                        password_field,
+                        action=u'edit', name=entry_name))
+
+    return string.join(result, u'')
+
+
+# [entry] is no longer used, but don't break existing pages.
+# (an entry is a page who's name starts with an eleven digit number, 
+#  no need for extra complication)
+def markup_entry(text, meta): return text
+
+
+# Handlers -------------------------------------------------------------------
+
+def make_http_page(text, meta=None, status='200'):
+    """ Produce HTTP headers and page text to pass to Apache, given
+        text in Aether markup language.
+        
+        Includes style sheet, sidebars, edit buttons, etc."""
+
+    if meta == None: meta = { }
+
+    markup(default, meta, False)
+
+    parts = meta.get('name',u'').split('/')
+    for i in xrange(len(parts)):
+        default_name = string.join(parts[:i]+[u'default'],'/')
+
+        try:
+            markup(load(default_name), meta, False)
+        except Error:
+            pass
+        
+    text = markup(text, meta, False)
+
+    meta['_page'] = text
+    text = markup(page_markup, meta, False)
+
+    meta['_page'] = text
+    meta['_style'] = style_sheet
+
+    html = markup(u'[html <html>\n<head>\n<title>]'
+                  u'[_insert_html title]'
+                  u'[html </title>\n]'
+                  u'[_insert_html _style]\n'
+                  u'[_insert_html _head_extra]\n'
+                  u'[html </head>\n<body>]'
+                  u'[_insert_html _page]'
+                  u'[html </body>\n</html>]', meta)
+
+    return u'Status: ' + status + u'\n' + \
+           u'Content-Type: text/html; charset=utf-8\n\n' + \
+           html_dtd + \
+           html
+
+
+def make_redirect(dest):
+    return u'Status: 302\n' + \
+           u'Location: '+name_to_url(dest)+u'\n\n'
+
+
+def make_404(name):
+    return make_http_page(u'[title 404 - page does not exist]', 
+                          {'name':name}, '404')
+
+
+def make_error(message, explanation=u''):
+    return make_http_page(u'[title Problem: '+message+u']\n' + explanation)
+
+
+def handle_search(name, query):
+    search_text = query.get('search',u'')
+    search = search_text.lower().split()
+
+    result = [ ]
+
+    def helper(name):
+        if exists(name):
+            text = load(name).lower()
+
+            for term in search:
+                if text.find(term) == -1:
+                    break
+            else:
+                result.append(u'[line [link ' + (quote_markup(name) or u'/') + 
+                              u'[page '+quote_markup(name)+']]]')
+
+        names = list_names(name)
+        for name, full_name in names:
+            helper(full_name)
+            
+
+    helper('')
+
+    if not result:
+        result.append('Search found nothing, sorry.')
+
+    if search:
+        result.insert(0, u'[title Search results]\n\n')
+        result.insert(1, u'Searching for: [bold ' + quote_markup(string.join(search,' ')) + u']\n\n')
+    else:
+        result.insert(0, u'[title Site map]\n\n')
+
+    return make_http_page(string.join(result,u''))
+
+
+def handle_atom(name, query):
+    """ Output an Atom (XML) version of a blog. """
+
+    if 'hasname' in query:
+        name = unquote_paranoid(query.get('name',u''))
+
+    meta = {'name':name}
+    markup(load(name), meta)
+
+    author = u''
+    if '_blog_author' in meta:
+        author += u'<name>' + quote_html(meta['_blog_author']) + '</name>'
+    if '_blog_email' in meta:
+        author += u'<email>' + quote_html(meta['_blog_email']) + '</email>'
+
+    feed_metadata = u'<title>' + quote_html(meta.get('title',name)) + u'</title>\n' + \
+                    u'<modified>' + w3c_time(meta['_blog_modified']) + u'</modified>\n'
+    if '_blog_tagline' in meta:
+        feed_metadata += u'<tagline>' + quote_html(meta['_blog_tagline']) + u'</tagline>\n'
+
+    return (u'Content-Type: application/xml; charset=utf-8\n\n' +
+            u'<?xml version="1.0" encoding="utf-8"?>\n' +
+            u'<feed version="0.3" xmlns="http://purl.org/atom/ns#">\n' +
+            u'<link rel="alternate" type="text/html" href="' + 
+               quote_html(name_to_url(name)) + u'"/>\n\n' +
+            feed_metadata +
+            u'<author>' + author + u'</author>\n' +
+            string.join(meta.get('_blog_entries',[]),u'\n') +
+            u'\n</feed>\n')
+
+
+def handle_all(name, query):
+    """ Output an index of all blog entries in a blog. """
+
+    if 'hasname' in query:
+        name = unquote_paranoid(query.get('name',u''))
+
+    meta = {'name':name, '_blog_all':True}
+    markup(load(name), meta)
+
+    title = meta.get('title',u'Blog') + ' : all entries'
+
+    return make_http_page( u'[_insert_html _html]',
+           { '_html' : string.join(meta['_blog_shorts'],u''),
+             'name' : name, 
+             'title' : title } )
+
+
+def handle_manual(name, query):
+    """ Output doc-strings of markup functions. """
+
+    commands = { }
+
+    for key in globals():
+        if key[:7] == 'markup_':
+            name = key[7:].replace('_','-')
+            doc = getattr(this_module,key).__doc__
+            if not doc: continue
+
+            doc = doc.replace('\n        ','\n')
+            doc = quote_markup(doc.strip())
+            commands[name] = u'[heading \\[' + name + '\\]]\n' + \
+                             u'[mono '+doc+']\n'
+
+    list = commands.keys()
+    list.sort()
+
+    for i in xrange(len(list)):
+        list[i] = commands[list[i]]
+
+    return make_http_page(u"""\
+[title Aether reference manual]
+Aether uses a simple markup language. 
+Square brackets are used to tag parts of the text. 
+For example:
+
+[indent [mono What a \[italic lovely\] day for sitting indoors
+reading \[link slashdot \[url http://slashdot.org\]\]. ]]
+
+produces
+
+[indent    What a [italic lovely] day for sitting indoors reading [link [url http://slashdot.org] slashdot].]
+
+A tag may do as little as change the font, or as much as insert an entire
+blog into the text. If you know Python, you may add tags of your own.
+
+[right [small [bold Technicalities]
+
+To delete a page, just remove all the text.
+
+If you wish to use square brackets in your text, 
+use "\\\\\\[" and "\\\\\\]" (and
+"\\\\\\\\" for "\\\\").
+
+To use HTML directly, use the \[html\] tag.
+
+To modify the layout of the page title, or insert default sidebars,
+create a page called "default". 
+Subdirectories may also have their own "default" page.
+
+The default default is
+
+[mono
+\[top 
+\[html <h1>\]
+\[_insert_html_later title\]
+\[html </h1>\]\]]
+
+]]
+
+The available tags are listed below.
+""" + string.join(list,u''), {'name':u''} )
+
+
+def handle_edit(_ignore_, query):
+    """ Handle everything to do with editing a page. """
+    
+    name = query.get('name', u'')
+    name = correct_case(name)
+
+    if 'hasnewname' in query:
+        new_name = query.get('newname',u'')
+    else:
+        new_name = name
+ 
+    if password and query.get('password',u'') != password:
+        if query.get('password',u'') == u'':
+            message = u'you need to give the password'
+        else:
+            message = u'that\'s not the password'
+
+        return make_error(message,
+            u'The password is given in the file:\n\n[mono    ' +
+            quote_markup(path.basename(data_dir)) + u'/_code.py]\n\n' +
+            u'When you use ' +
+            u'Aether for the first time, a random password is chosen. ' +
+            u'You may either use that or edit _code.py.')
+    
+    if 'text' in query:
+        text = query['text']
+    elif 'hastext' not in query and exists(name):
+        text = load(name)
+    else:
+        text = u''
+       
+    if 'save' in query:
+        if new_name != name:
+            if exists(new_name):
+                return make_error(u'a page already exists with that name')
+
+        remove(name)
+
+        if text.strip():
+            save(text, new_name)
+
+        save(text, new_name, u'_history', now() + u'.gz', True)
+
+        return make_redirect(new_name)
+
+    form = make_form(
+        u'<p>URL:<br><span style="font-family: monospace">'+
+        quote_html(host_url+page_base)+
+        '/</span><input name=newname value="'+
+        quote_html(new_name) + u'" size=30>' +
+        u'<p>Text:' +
+        u'<br><textarea name=text rows=20 cols=80 style="width: 100%">' +
+        quote_html(text) +
+        u'</textarea>' +
+        u'<p><input type=submit name=preview value="Preview changes">' + 
+        u' <input type=submit name=save value="Save changes">',
+        action=u'edit', password=password, name=name, 
+        hastext=u'yes', hasnewname=u'yes')
+        
+    if allow_attachments:
+        bottom = (u'<iframe src="'+ 
+                  quote_html(host_url + script_base) + 
+                  u'?action=attachments;name=' + quote_paranoid(new_name) +
+                  u';password='+quote_paranoid(password) +
+                  u'" width="100%" height=200 style="border: solid 1px; border-color: #ddd"></iframe>')
+    else:
+        bottom = u''
+ 
+    return make_http_page(u"""\
+Editing [link [_insert _base]/[bold [_insert _old_name]] [page [_insert _old_name]]]
+
+[_insert_html _form]
+
+
+""" + text + u"""
+[right [prepend] 
+[rule]
+
+[small [sans [link History of this page [url [_insert _revision_url]]]]
+
+[sans [link Aether reference manual [url [_insert _reference_url]]]]]
+
+[rule]
+]
+[bottom [append] [_insert_html _add_bottom]]
+""", 
+        { '_editing' : 1,
+          '_form' : form,
+          '_revision_url' : host_url + script_base + u'?action=history;' +
+              u'name=' + quote_paranoid(new_name) + 
+              u';password=' + quote_paranoid(password),
+          '_reference_url' : host_url + script_base + u'?action=manual',
+          '_base' : host_url + page_base,
+          '_add_bottom' : bottom,
+          '_old_name' : name, 'name' : new_name})
+
+
+def _check_password(password_given):
+    if password and password != password_given:
+        Error('Incorrect password')
+
+
+def _attachments_check_security(query):
+    if not allow_attachments:
+        raise Error('File attachment disabled')
+
+    _check_password(unquote_paranoid(query.get('password',u'')))
+
+
+def handle_attach(_ignore_, query):
+    """ Attach a file to a page (from within the attachments iframe). """
+
+    _attachments_check_security(query)
+
+    name = unquote_paranoid(query.get('name',u''))
+    data = query['file']
+    filename = query['filename']
+
+    filename = path.basename(filename)
+
+    check_for_filename_hack(filename)
+
+    ensure_dir_exists(path.join(file_dir,name))
+
+    file = utf8_open(path.join(file_dir,name,filename), 'wb')
+    file.write(data)
+    file.close()
+
+    return handle_attachments(None, query)
+
+
+def handle_delete(_ignore_, query):
+    """ Delete an attached file (from within the attachments iframe). """
+
+    _attachments_check_security(query)
+
+    name = unquote_paranoid(query.get('name',u''))
+    for key in query:
+        if query[key] != u'on' or \
+           key[:8] != 'checkbox':
+            continue
+
+        filename = unquote_paranoid(key[8:])
+    
+        check_for_filename_hack(filename)
+
+        utf8_unlink(path.join(file_dir,name,filename))
+    
+    return handle_attachments(None, query)
+
+
+def handle_attachments(_ignore_, query):
+    """ Display form for attaching and deleting files.
+        (this is an <iframe> in the edit page) """
+    _attachments_check_security(query)
+
+    name = unquote_paranoid(query.get('name', u''))
+    dir = path.join(file_dir,name)
+
+    if utf8_exists(dir):
+        files = utf8_listdir(dir)
+    else:
+        files = [ ]
+
+    files.sort()
+
+    file_list = [ ]
+    for filename in files:
+        full_filename = path.join(dir, filename)
+        if not utf8_isfile(full_filename):
+            continue
+
+        if len(file_list) % 2:
+            color = '#dddddd'
+        else:
+            color = '#eeeeee'
+
+        checkbox_name = 'checkbox'+quote_paranoid(filename)
+
+        file_size = os.path.getsize(full_filename)        
+        if file_size >= 1024:
+            file_size_desc = '(%d kB)' % (file_size/1024)
+        else:
+            file_size_desc = '(%d bytes)' % file_size
+
+        file_list.append(
+            u'<tr bgcolor='+color+'><td>' + 
+            u'<a href="' + quote_html(attachment_to_url(name,filename)) + 
+            u'" target=_parent>' + quote_html(filename) + u'</a>' +
+            u'</td><td align=right> ' + file_size_desc +
+            u'<input name=' + checkbox_name + 
+            ' type=checkbox></td></tr>')
+    
+    result = make_form(
+        u'<b>Attach a file:</b>'+
+        u'<br>' +
+        u'<input type=file name=file> ' +
+        u'<input name=attach type=submit value="Attach file">',
+        extra_options=u'enctype="multipart/form-data"',
+        action=u'attach', 
+        name=query.get('name',u''), password=query.get('password',u'')
+        )
+        
+    if file_list:
+        result += make_form(
+            u'<p><b>Files currently attached to this page:</b>\n' + \
+            u'<table width="100%" cellspacing=0 cellpadding=5>' +
+            string.join(file_list, u'') +
+            u'<tr><td>' +
+            u'<td align=right>' +
+            u'<input name=delete type=submit value="Delete selected files">' +
+            u'</td></table><p>',
+            action=u'delete', 
+            name=query.get('name',u''), password=query.get('password',u'')
+            )
+
+    return u'Status: 200\n' + \
+           u'Content-Type: text/html; charset=utf-8\n\n' + \
+           html_dtd + \
+           u'<html><body>' + \
+           style_sheet + \
+           result + \
+           '</body></html>'
+
+
+def handle_history(_ignore_, query):
+    _check_password(unquote_paranoid(query.get('password',u'')))
+
+    name = unquote_paranoid(query.get('name', u''))
+
+    if 'time' in query:
+        when = query['time']
+        this_text = load(name, u'_history', when + u'.gz', True)
+        if 'oldtime' in query:
+            old_text = load(name, u'_history', query['oldtime'] + u'.gz', True)
+            diff = make_diff(old_text, this_text)
+        else:
+            diff = u''
+
+        text = (
+            u'[rule]\n' +
+            u'[sans [link [_insert _base]/[bold [_insert name]] [page [_insert name]]] ' +
+            u'[line ' + describe_time(when) +
+            u']]\n\n[html ' +
+            quote_markup(make_form(
+                u'<input type=submit name=submit ' +
+                u'value="Revert to this version...">',
+                action=u'edit', password=password, name=name, 
+                hastext=u'yes', text=this_text)) +
+            u']\n\n[html ' + quote_markup(diff) + u']\n\n[rule]\n\n\n' +
+            this_text )
+
+    else:
+        list = list_names(name, u'_history')
+        list.reverse()
+
+        times = [ ]
+        for item, full_name in list:
+            if re.match('[0-9]+\.gz', item):
+                times.append(item[:-3])
+        
+        if not times:
+            text = u'No prior versions of this page.'
+        else:
+            text = u''
+            n = 0
+            for time, old_time in map(None, times, times[1:]+[u'']):
+                text += (
+                   u'[link ' + describe_time(time) + u' [url ' +
+                   quote_markup(
+                       host_url + script_base + u'?action=history;' +
+                       u'name=' + quote_paranoid(name) + 
+                       u';password=' + quote_paranoid(password) +
+                       u';time=' + time +
+                       u';oldtime=' + old_time) +
+                   u']]\n\n' )
+
+                if n < 20 and old_time:
+                    this_text = load(name, u'_history', time + u'.gz', True)
+                    old_text = load(name, u'_history', old_time + u'.gz', True)
+                    diff = make_diff(old_text, this_text)
+                    text += u'[indent [html ' + quote_markup(diff) + u']]\n\n'
+
+                n += 1
+
+    return make_http_page(u"""
+[title History of "[_insert name]"]
+
+""" + text,
+        { 'name' : name,
+          '_base' : host_url + page_base } ) 
+
+
+# Talking to Apache ----------------------------------------------------------
+
+
+def perform_request(name, query):
+    lock()
+    try:
+        # root page shall have a slash on the end
+        # (very pedantic!)
+        if not name and not query:
+            return make_redirect(u'')
+
+        if name[:1] == u'/': # should always be true.
+            name = name[1:]
+
+        correct_name = correct_case(name)
+        while correct_name[-1:] == '/':
+            correct_name = correct_name[:-1]
+
+        if name != correct_name:
+            return make_redirect(correct_name)
+
+        if query:
+            action = query.get('action',u'').encode('utf-8')
+            return getattr(this_module,'handle_'+action)(name, query)
+
+        if not exists(name):
+            return make_404(name)
+
+        return make_http_page(load(name), {'name': name})
+    finally:
+        unlock()
+
+
+def decode_fields(fields):
+    """ Extract data from a cgi.FieldStorage (or equivalent).
+    
+        For security, if a file was sent only fetch it if the correct password
+        was given. """
+        
+    query = { }
+    for key in fields.keys():
+        if key != 'file':
+            query[key] = fields.getfirst(key,'').decode('utf-8')
+
+    if fields.has_key('file'):
+        if password and password != unquote_paranoid(query.get('password',u'')):
+            raise Error('Incorrect password')
+
+        query['filename'] = fields['file'].filename.decode('utf-8')
+        query['file'] = fields['file'].file.read()
+
+    return query
+
+
+def main():
+    """ Get request, perform request, output resulting page. """
+
+    # Which page was requested?
+    # (Made slightly complicated by support for 
+    #  Apache's ErrorDocument feature.)
+    if 'REDIRECT_URL' in os.environ:
+        name = os.environ['REDIRECT_URL'].decode('utf-8')
+    else:
+        name = os.environ['SCRIPT_NAME'].decode('utf-8') + \
+               os.environ.get('PATH_INFO','').decode('utf-8')
+
+    if (name+u'/')[:len(page_base)+1] != page_base+u'/':
+        raise Error('AETHER_ROOT incorrect in .htaccess?')
+
+    name = name[len(page_base):] 
+
+
+    import cgi
+    fields = cgi.FieldStorage()
+    query = decode_fields(fields)
+
+
+    sys.stdout.write(perform_request(name, query).encode('utf-8'))
+
+
+if __name__ == '__main__':
+    try:
+        # Global variables ---------------------------------------------------
+        
+        # In _code.py: password = u' ... '
+        #          or: password = u'' for no password
+
+        allow_attachments = True
+
+        # host_url is http://<host name>
+        #
+        # data_dir contains pages managed by Aether, and _code.py
+        # host_url+page_base is the url of the pages managed by Aether
+        #
+        # file_dir contains files attached to pages
+        # host_url+file_base is the url of file_dir
+        #     (attached files are served by Apache directly)
+        #
+        # host_url+script_base is the url of the Aether script
+
+        script_filename = path.join(os.getcwd().decode('utf-8'), 
+                                    sys.argv[0].decode('utf-8'))
+        data_dir = script_filename + u'-data'
+        file_dir = script_filename + u'-files'
+
+        host_url = 'http://' + os.environ.get('HTTP_HOST','').decode('utf-8') 
+
+        script_base = os.environ.get('SCRIPT_NAME','').decode('utf-8') 
+        file_base = script_base + u'-files'
+
+
+        if 'AETHER_ROOT' in os.environ:
+            # Script being used with Apache's ErrorDocument feature
+            page_base = os.environ.get('AETHER_ROOT','').decode('utf-8')
+        else:
+            page_base = os.environ.get('SCRIPT_NAME','').decode('utf-8')
+
+        while page_base[-1:] == u'/': page_base = page_base[:-1]
+
+
+        # Hack so cgi module finds query string when serving error document
+        if 'REDIRECT_QUERY_STRING' in os.environ:
+            os.environ['QUERY_STRING'] = os.environ['REDIRECT_QUERY_STRING']
+
+
+        # Customization and configuration ------------------------------------
+
+        if not utf8_exists(data_dir):
+            utf8_mkdir(data_dir)
+
+        if not utf8_exists(data_dir+u'/.htaccess'):
+            file = utf8_open(data_dir+u'/.htaccess','wt')
+            file.write('Deny from all\n')
+            file.close()
+
+        if not utf8_exists(data_dir+u'/_code.py'):
+            import random
+
+            file = utf8_open(data_dir+u'/_code.py','wt')
+            file.write('# Insert custom python code here\n')
+
+            file.write(u'\npassword = u\'')
+            for i in xrange(5):
+                file.write(chr( ord('a')+random.randrange(26) ))
+            file.write(u'\'\n\n')
+
+            file.close()
+
+        # Allow imports from _code.py
+        sys.path.insert(0, data_dir.encode('utf-8'))
+
+        execfile((data_dir+u'/_code.py').encode('utf-8'))
+        
+        # Note:
+        # _code.py is executed as though it were part of the aether module, so
+        # you may override global variables, or even redefine main()
+
+        # Run ----------------------------------------------------------------
+
+        main()
+
+    except:
+        print 'Content-Type: text/plain\n\n'
+        print '\n\n\nThe script serving this site just crashed. Sorry.\n\n\n'
+        
+        import traceback
+        traceback.print_exc(file=sys.stdout)
